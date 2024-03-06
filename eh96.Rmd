@@ -1,0 +1,139 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(RMariaDB)
+ath <- dbConnect(RMariaDB::MariaDB(),
+                 host = '0.0.0.0',
+                 port = 3306,
+                 user = 'root', password = 'bitnami',
+                 dbname = 'hg19'
+)
+```
+```{r}
+databases = dbGetQuery(ath, 'show databases')
+databases
+
+```
+```{r}
+tables = dbGetQuery(ath, 'show tables')
+tables
+```
+```{r}
+gene_names <- readLines("/Users/EmilyHuang/Desktop/NYU/spring 24/BDD/hw3/HW3_attachments/Gene_names.txt")
+
+
+refGene <- dbGetQuery(ath, "SELECT * FROM refGene")
+refGene
+
+```
+
+
+```{r}
+#for question 1 - coding to get the numbers for each 
+refGenesFiltered <- refGene %>%
+  filter(name2 %in% gene_names) %>%
+  group_by(name2) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(name, name2, chrom, strand, txStart, txEnd)
+head(refGenesFiltered, n = 25)
+
+write.table(refGenesFiltered, "eh96_part1.tsv", sep = "\t", row.names = FALSE, col.names = TRUE)
+
+```
+```{r}
+#part 2
+#load tables into var tissueTables
+tissueTables <- c("burgeRnaSeqGemMapperAlignAdipose", "burgeRnaSeqGemMapperAlignBrain",
+                  "burgeRnaSeqGemMapperAlignBreast", "burgeRnaSeqGemMapperAlignColon",
+                  "burgeRnaSeqGemMapperAlignHeart", "burgeRnaSeqGemMapperAlignLiver")
+
+countReadsInGene <- function(gene, tissueTable) {
+  # query to count genes that match
+   query <- sprintf("SELECT COUNT(*) as read_count FROM %s WHERE chrom = '%s' AND strand = '%s' AND NOT (chromEnd <= %d OR chromStart >= %d)",
+                   tissueTable, gene$chrom, gene$strand, gene$txStart, gene$txEnd)
+
+
+  readCounts <- dbGetQuery(ath, query)
+  
+  return(as.numeric(readCounts$read_count))
+}
+#set up how table looks
+ReadCount <- matrix(data = 0, nrow = nrow(refGenesFiltered), ncol = length(tissueTables))
+rownames(ReadCount) <- refGenesFiltered$name2
+colnames(ReadCount) <- tissueTables
+#go through each gene to count
+for (tissue in tissueTables) {
+  for (i in 1:nrow(refGenesFiltered)) {
+    gene <- refGenesFiltered[i, ]
+    ReadCount[i, tissue] <- countReadsInGene(gene, tissue)
+  }
+}
+
+#write the csv file
+write.csv(ReadCount, "eh96_part2.csv", row.names = TRUE, col.names = NA)
+
+#check to see what it looks like
+ReadCount
+
+```
+```{r}
+#question 3
+GeneNorm <- as.data.frame(ReadCount) 
+
+#math function given to standardizze right
+standardize <- function(x) {
+  (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+}
+
+#standardize each row
+GeneNorm <- as.data.frame(t(apply(GeneNorm, 1, standardize)))
+
+#row name ensurance
+rownames(GeneNorm) <- rownames(ReadCount)
+#write into csv
+write.csv(GeneNorm, "eh96_part3.csv", row.names = TRUE)
+
+```
+
+```{r}
+#part 4
+
+#genes of interest
+genes_of_interest <- c("MXRA8", "SERINC2", "SLC2A5")
+data_for_plot <- GeneNorm[rownames(GeneNorm) %in% genes_of_interest, ]
+
+# Transpose the data for plotting and convert it to a matrix if it's not already
+data_for_plot_matrix <- as.matrix(t(data_for_plot))
+
+# Define colors for the plot
+colors <- c("seagreen", "lavender", "steelblue1", "khaki", "darkturquoise", "lightpink")
+
+# Start the PNG device
+png("eh96_plot.png", width = 660, height = 524)
+par(mar = c(5, 4, 4, 8) + 0.1)
+
+# Create a barplot
+barplot_heights <- barplot(data_for_plot_matrix, beside = TRUE, 
+                           main = "Normalized Gene Expression Across Tissues",
+                           xlab = "Genes", ylab = "Normalized Expression",
+                           col = colors, ylim = c(min(data_for_plot_matrix), max(data_for_plot_matrix)),
+                           names.arg = genes_of_interest)
+
+
+legend(x = "topright", inset = c(-0.23, 0.25), legend = colnames(data_for_plot), 
+       fill = colors, cex = 0.75, horiz = FALSE, xpd = TRUE)
+
+dev.off()
+```
+```{r}
+dbConnect()
+```
+

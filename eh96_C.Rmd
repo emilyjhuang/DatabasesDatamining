@@ -1,0 +1,76 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+#load library and connect to database
+library(RSQLite)
+library(dplyr)
+library(readr)
+library(DBI)
+conn <- dbConnect(SQLite(), dbname = "eh96_db.sqlite")
+```
+```{r}
+#get probeset for control experiemnts and the same thing for the treatments
+control_expid <- dbGetQuery(conn, "SELECT expid FROM Experiment WHERE expname = 'Control'")$expid
+treatment_expid <- dbGetQuery(conn, "SELECT expid FROM Experiment WHERE expname = 'Treatment'")$expid
+
+#query for ontrol averages using SQL code, getting the average value, by joining the tables and grouping them by name
+control_averages <- dbGetQuery(conn, sprintf(
+  "SELECT p.probename AS probeset_name, AVG(d.expvalue) AS average_value_control
+   FROM Data d
+   JOIN Probes p ON d.probeid = p.probeid
+   WHERE d.expid = %d
+   GROUP BY p.probename", control_expid))
+#new column is added to label these rows as part of the 'Control' group
+control_averages$experiment_group <- 'Control'
+
+#treatment averages - query for treatment averages using SQL code, getting the average value, by joining the tables and grouping them by name
+treatment_averages <- dbGetQuery(conn, sprintf(
+  "SELECT p.probename AS probeset_name, AVG(d.expvalue) AS average_value_treatment
+   FROM Data d
+   JOIN Probes p ON d.probeid = p.probeid
+   WHERE d.expid = %d
+   GROUP BY p.probename", treatment_expid))
+
+#new column is added to label these rows as part of the 'Treatment' group
+treatment_averages$experiment_group <- 'Treatment'
+
+#line merges the control and treatment averages into a single dataframe by probe name (probeset_name). uses outer join (all=TRUE), ensuring that if a probe name appears in one group but not the other, it will still be included in the combined dataframe.
+combined_averages <- merge(control_averages, treatment_averages, by="probeset_name", all=TRUE)
+
+print(combined_averages)
+```
+
+```{r}
+query <- "
+    SELECT e.expname AS experiment_name,
+         AVG(d.expvalue) AS average_value
+  FROM Data d
+  JOIN Experiment e ON d.expid = e.expid
+  GROUP BY e.expname
+  ORDER BY e.expname
+"
+
+result <- dbGetQuery(conn, query)
+
+result
+
+```
+```{r}
+# read from expvalues.txt to make sure got right values 
+
+expvalues_df <- read_delim("expvalues.txt", delim = "\t", col_names = TRUE)
+expvalues_df <- expvalues_df %>%
+  mutate(across(everything(), as.numeric)) %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+
+expvalues_df
+```
+

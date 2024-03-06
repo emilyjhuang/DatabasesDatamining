@@ -1,0 +1,117 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r}
+#loading all the libraries and laoding the expvalues.txt into the workspace +check to see if it loaded correctly
+library(RSQLite)
+library(dplyr)
+library(readr)
+library(DBI)
+data <- read.table("/Users/EmilyHuang/Desktop/NYU/spring 24/BDD/hw 2/expvalues.txt", sep='\t', header = TRUE,row.names = 1, check.names = FALSE)
+data
+```
+```{r}
+#connection to my db
+conn <- dbConnect(SQLite(), dbname = "eh96_db.sqlite")
+```
+```{r}
+#creating each table specifing what the primary and foreign key are - added if not exists because theres an error if i run again
+#exp table
+dbExecute(conn, "CREATE TABLE IF NOT EXISTS Experiment  (
+                    expid INTEGER PRIMARY KEY,
+                    expname TEXT)")
+
+
+#probe table
+dbExecute(conn, "CREATE TABLE IF NOT EXISTS Probes (
+                    probeid INTEGER PRIMARY KEY,
+                    probename TEXT)")
+
+#data table
+dbExecute(conn, "CREATE TABLE IF NOT EXISTS Data (
+                    dataid INTEGER PRIMARY KEY,
+                    expid INTEGER,
+                    probeid INTEGER,
+                    expvalue REAL,
+                    FOREIGN KEY (expid) REFERENCES Experiment(expid),
+                    FOREIGN KEY (probeid) REFERENCES Probes(probeid))")
+```
+
+```{r}
+#reset when working
+dbExecute(conn, "DELETE FROM Data")
+
+dbExecute(conn, "DELETE FROM Probes")
+
+dbExecute(conn, "DELETE FROM Experiment")
+```
+```{r}
+#connecting control and treatment columns
+dbExecute(conn, "INSERT INTO Experiment (expname) VALUES ('Control')")
+dbExecute(conn, "INSERT INTO Experiment (expname) VALUES ('Treatment')")
+#creating variable to hold data of column names
+exp_names <- colnames(data)
+
+#creating a variable for control experiments to later use
+control_id <- dbGetQuery(conn, "SELECT expid FROM Experiment WHERE expname = 'Control'")$expid
+
+#creating a variable for treatment experiments to later use
+treatment_id <- dbGetQuery(conn, "SELECT expid FROM Experiment WHERE expname = 'Treatment'")$expid
+
+#for some reason  my exp_id wasn't working so i had to create a exp_ids variable that can parse and filter for the word control and place the correct data into the right section(control or treatment)
+exp_ids <- sapply(exp_names, function(exp_name) {
+  if (grepl("Control", exp_name)) {
+    return(control_id)
+  } else {
+    return(treatment_id)
+  }
+}, USE.NAMES = FALSE)
+
+#getting the row and putting the data from that row into variable prove_names
+probe_names <- rownames(data)
+#going through the whole vector and inserting each value into the probe databse
+for (probe_name in probe_names) {
+  dbExecute(conn, "INSERT INTO Probes (probename) VALUES (?)", params = list(probe_name))
+}
+#gettig the probe id
+probe_ids <- dbGetQuery(conn, "SELECT probeid FROM Probes ORDER BY probeid")$probeid
+#gets the proe id from teh probe table and isneting this data so that it aligns into the data table - using nested loop to iterate over each experiment and probe combination, inserting the corresponding data value into the Data table 
+for (exp_index in seq_along(exp_names)) {
+  for (probe_index in seq_along(probe_names)) {
+    exp_value <- data[probe_index, exp_index]
+    dbExecute(conn, "INSERT INTO Data (expid, probeid, expvalue) VALUES (?, ?, ?)", 
+              params = list(exp_ids[exp_index], probe_ids[probe_index], exp_value))
+  }
+}
+
+```
+
+
+```{r}
+#checking to see if i did the right thing with each table
+#for each one i get the ehad of the table limitting it to 5 rows and print that along with the shape to get the rows and columns
+experiment_head <- dbGetQuery(conn, "SELECT * FROM Experiment LIMIT 5")
+cat("Head of Experiment table:\n")
+experiment_head
+experiment_shape <- dbGetQuery(conn, "SELECT COUNT(*) as 'Number of Rows' FROM Experiment")
+cat("Shape of Experiment table: ", experiment_shape$`Number of Rows`, "rows\n")
+
+# same thing for probes
+probes_head <- dbGetQuery(conn, "SELECT * FROM Probes LIMIT 5")
+cat("Head of Probes table:\n")
+probes_head
+probes_shape <- dbGetQuery(conn, "SELECT COUNT(*) as 'Number of Rows' FROM Probes")
+cat("Shape of Probes table: ", probes_shape$`Number of Rows`, "rows\n")
+
+# same thing for data - it worked !
+data_head <- dbGetQuery(conn, "SELECT * FROM Data LIMIT 5")
+cat("Head of Data table:\n")
+data_head
+data_shape <- dbGetQuery(conn, "SELECT COUNT(*) as 'Number of Rows' FROM Data")
+cat("Shape of Data table: ", data_shape$`Number of Rows`, "rows, 4 columns\n")
+```
+
